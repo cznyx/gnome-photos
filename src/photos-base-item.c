@@ -1343,6 +1343,33 @@ photos_base_item_process_finish (PhotosBaseItem *self, GAsyncResult *res, GError
 
 
 static void
+photos_base_item_pipeline_reverted_to_original (GObject *source_object, GAsyncResult *res, gpointer user_data)
+{
+  PhotosBaseItem *self = PHOTOS_BASE_ITEM (source_object);
+  g_autoptr (GTask) task = G_TASK (user_data);
+  PhotosPipeline *pipeline = PHOTOS_PIPELINE (g_task_get_task_data (task));
+
+  {
+    g_autoptr (GError) error = NULL;
+
+    if (!photos_base_item_process_finish (self, res, &error))
+      {
+        g_task_return_error (task, g_steal_pointer (&error));
+        goto out;
+      }
+  }
+
+  /* Even if deleting serialized edit file fails, let's not fail the task */
+  photos_pipeline_file_delete_async (pipeline);
+
+  g_task_return_boolean (task, TRUE);
+
+  out:
+    return;
+}
+
+
+static void
 photos_base_item_common_process (GObject *source_object, GAsyncResult *res, gpointer user_data)
 {
   PhotosBaseItem *self = PHOTOS_BASE_ITEM (source_object);
@@ -4080,6 +4107,7 @@ photos_base_item_pipeline_revert_to_original_async (PhotosBaseItem *self,
 
   task = g_task_new (self, cancellable, callback, user_data);
   g_task_set_source_tag (task, photos_base_item_pipeline_revert_to_original_async);
+  g_task_set_task_data (task, g_object_ref (pipeline), g_object_unref);
 
   if (priv->edit_graph == NULL)
     {
@@ -4087,7 +4115,10 @@ photos_base_item_pipeline_revert_to_original_async (PhotosBaseItem *self,
       goto out;
     }
 
-  photos_base_item_process_async (self, cancellable, photos_base_item_common_process, g_object_ref (task));
+  photos_base_item_process_async (self,
+                                  cancellable,
+                                  photos_base_item_pipeline_reverted_to_original,
+                                  g_object_ref (task));
 
  out:
   return;
